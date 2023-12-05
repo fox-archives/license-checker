@@ -1,14 +1,9 @@
 import path from "node:path";
-import * as fs from 'node:fs/promises'
 import { parseArgs } from "node:util";
-import { Dirent, createReadStream } from "node:fs";
-import yn from 'yn'
-import readline from 'readline/promises'
-import events from 'node:events'
 
-import { getNLines, writeUpdatedSPDX, walk, checkFile } from './util.js'
+import { walk, checkFile } from './util.js'
 
-const { positionals, values: option } = parseArgs({
+const { positionals, values: options } = parseArgs({
 	options: {
 		fix: {
 			type: 'boolean'
@@ -20,42 +15,57 @@ const { positionals, values: option } = parseArgs({
 	}
 })
 
-const octothorp = (line) => `# ${line}`
-const slashAsterisk = (line) => `/* ${line} */`
-const doubleSlash = (line) => `// ${line}`
+const wrapInOctothorpe = (line) => `# ${line}`
+const wrapInSlashAsterisks = (line) => `/* ${line} */`
+const wrapInDoubleSlash = (line) => `// ${line}`
+const wrapInXMLComment = (line) => `<!-- ${line} -->`
 
-// TODO: markdown, tsx, jsx, json, toml
-const globalOptions = {
-	skipLine: (line) => /^#!/.test(line)
+const config = {
+	info: {
+		license: 'MPL-2.0',
+		year: '2023',
+		name: 'Edwin Kofler'
+	},
+	rootDir: path.resolve(positionals.length > 0 ? positionals[0] : '.'),
+	cliOptions: options,
+	ignoredDirectories: ['.git', 'node_modules'],
+	globalApply: {
+		skipLine: (line) => /^#!/.test(line)
+	},
+	perApply: [
+		{
+			match: ['.html'],
+			wrapInComment: wrapInXMLComment
+		},
+		{
+			match: ['.css', '.postcss'],
+			wrapInComment: wrapInSlashAsterisks
+		},
+		{
+			match: ['.js', '.jsx', '.ts', '.tsx'],
+			wrapInComment: wrapInDoubleSlash
+		},
+		{
+			match: ['.py'],
+			wrapInComment: wrapInOctothorpe
+		},
+		{
+			match: ['.yaml', '.yml'],
+			skipLine: (line) => line === '#cloud-config',
+			wrapInComment: wrapInOctothorpe
+		},
+		{
+			match: ['.toml'],
+			wrapInComment: wrapInOctothorpe
+		}
+	]
 }
-const fileOptions = {
-	'text/html': {
-		wrapInComment: (line) => `<!-- ${line} -->`
-	},
-	'text/css': {
-		wrapInComment: slashAsterisk
-	},
-	'text/javascript': {
-		wrapInComment: doubleSlash
-	},
-	'text/x-python': {
-		wrapInComment: octothorp
-	},
-	'application/x-yaml': {
-		skipLine: (line) => line === '#cloud-config',
-		wrapInComment: octothorp
-	},
-	'application/toml': {
-		wrapInComment: octothorp
-	}
-}
-const rootDir = path.resolve(positionals.length > 0 ? positionals[0] : '.')
-const ignoredDirectories = ['.git', 'node_modules']
 
-const totalBad = []
-for await (const filepath of walk(rootDir, { ignoredDirectories })) {
+let badFiles = []
+for await (const filepath of walk(config.rootDir, config)) {
 	if (filepath === null) continue
 
-	await checkFile(rootDir, filepath, totalBad)
+	const files = await checkFile(filepath, config)
+	badFiles = badFiles.concat(files)
 }
-console.log(`Total Bad: ${totalBad.length}`)
+console.log(`Total Bad: ${badFiles.length}`)

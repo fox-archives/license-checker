@@ -23,15 +23,16 @@ export async function getNLines(filepath) {
 
 /**
  * @param {string} filepath
- * @param {{ year: number, name: string, license: string }} data
+ * @param {unknown} config
  */
-export async function writeUpdatedSPDX(filepath, data) {
+export async function writeUpdatedSPDX(filepath,curConfig, config) {
     const content = await fs.readFile(filepath, 'utf-8')
     const contentArray = content.split('\n')
 
     const indexesToRemove = []
     for (let i = 0; i < contentArray.length; ++i) {
         const line = contentArray[i]
+        // TODO
         if (line.startsWith('//')) {
             indexesToRemove.push(i)
         } else {
@@ -43,21 +44,21 @@ export async function writeUpdatedSPDX(filepath, data) {
         contentArray.splice(i, 1)
     }
 
-    let newContent = contentArray.join('\n')
-    newContent = `// SPDX-FileCopyrightText: Copyright (c) ${data.year} ${data.name}
-// SPDX-License-Identifier: ${data.license}\n` + content
-    await fs.writeFile(filepath, newContent)
+    const prelude = [`SPDX-FileCopyrightText: Copyright (c) ${config.info.year} ${config.info.name}`, `SPDX-License-Identifier: ${config.info.license}\n`].map(curConfig.wrapInComment).join('\n')
+    
+    const newContent = prelude +  contentArray.join('\n')
+await fs.writeFile(filepath, newContent)
 }
 
-export async function* walk(dir, options) {
+export async function* walk(dir, config) {
 	const dirents = await fs.readdir(dir, { withFileTypes: true });
 	for (const dirent of dirents) {
 		const filepath = path.join(dir, dirent.name);
 		if (dirent.isDirectory()) {
-		if (options.ignoredDirectories.includes(dirent.name)) {
+		if (config.ignoredDirectories.includes(dirent.name)) {
 			yield null
 		} else {
-			yield* walk(filepath, options);
+			yield* walk(filepath, config);
 		}
 		} else {
 			yield filepath;
@@ -66,17 +67,33 @@ export async function* walk(dir, options) {
 }
 
 /**
- * @param {Dirent} filepath
+ * @param {string} rootDir
  */
-export async function checkFile(rootDir, filepath, totalBad) {
-	const relPath = filepath.slice(rootDir.length + 1)
-	
+export async function checkFile(filepath, config) {
+	const relPath = filepath.slice(config.rootDir.length + 1)
 	const ext = path.parse(filepath).ext
 
-	
-	if (!['.md', '.js', '.jsx', '.tsx', '.json', '.toml'].includes(ext)) {
-		console.log('BAD', relPath)
-		totalBad.push(relPath)
+    const curConfig = {
+        skipLine: [config.globalApply.skipLine],
+        wrapInComment: (line) => line,
+    }
+
+    let wasFound = false
+	for (const perApply of config.perApply) {
+        if ( perApply.match.includes(ext)) {
+            wasFound = true
+            if (perApply.skipLine) {
+                curConfig.skipLine.push(perApply.skipLine)
+
+            }
+            if (perApply.wrapInComment) {
+                curConfig.wrapInComment = perApply.wrapInComment
+            }
+        }
+    }
+	if (!wasFound) {
+		console.log('BAD: Extension not found for:', relPath)
+		return [relPath]
 	}
 	
 	const content = await fs.readFile(filepath, { encoding: 'utf-8' })
@@ -85,25 +102,21 @@ export async function checkFile(rootDir, filepath, totalBad) {
 		return
 	}
 
-	console.log('Fix?' + filepath)
 	const rl = readline.createInterface({
 		input: process.stdin,
 		output: process.stdout,
 	})
-	
-	const input = await rl.question('Fix')
+	const input = await rl.question(`Fix file: ${filepath}? `)
 	rl.close()
 	if (yn(input)) {
-		const license = 'MPL-2.0'
-		const year = '2023'
-		const name = 'Edwin Kofler'
-
 		console.log('---')
 		console.log(await getNLines(filepath))
 		console.log('---')
-		await writeUpdatedSPDX(filepath, { year, name, license })
+		await writeUpdatedSPDX(filepath,curConfig, config)
 		console.log('---')
 		console.log(await getNLines(filepath))
 		console.log('---')
-	}
+	} else {
+        console.log('BAD: No prelude SPDX ids for file:', relPath)
+    }
 }
