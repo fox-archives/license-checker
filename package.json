@@ -1,0 +1,8 @@
+{
+	"name": "license-checker",
+	"type": "module",
+	"bin": "./bin/license-checker.js",
+	"dependencies": {
+		"yn": "^5.0.0"
+	}
+}
